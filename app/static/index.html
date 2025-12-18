@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>Realtime Temp & Humi</title>
+  <link rel="stylesheet" href="/static/styles.css?v=4">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+</head>
+<body>
+  <h2>Realtime Temperature & Humidity
+    <span id="status" class="badge">connecting...</span>
+    <span id="raw" class="badge">raw: -</span>
+  </h2>
+  <div class="row">
+    <div class="card kpi"><b>Temperature (indoor)</b>: <span id="t_indoor">-</span> °C</div>
+    <div class="card kpi"><b>Humidity (indoor)</b>: <span id="h_indoor">-</span> %RH</div>
+    <div class="card kpi"><b>Temperature (outdoor)</b>: <span id="t_outdoor">-</span> °C</div>
+    <div class="card kpi"><b>Humidity (outdoor)</b>: <span id="h_outdoor">-</span> %RH</div>  <div class="card kpi"><b>Dew Point (indoor)</b>: <span id="dp_indoor">-</span> °C</div>
+  <div class="card kpi"><b>Dew Point (outdoor)</b>: <span id="dp_outdoor">-</span> °C</div>
+
+  </div>
+  <div class="row">
+    <div class="card"><canvas id="temp"></canvas></div>
+    <div class="card"><canvas id="humi"></canvas></div>
+  <div class="card"><canvas id="dew"></canvas></div>
+  </div>
+  <script src="/static/app.js?v=4"></script>
+</body>
+</html>
