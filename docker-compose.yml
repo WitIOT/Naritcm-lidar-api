@@ -37,7 +37,7 @@ services:
       # ===== GPIO Door/Limit =====
       GPIO_CHIP: "/dev/gpiochip0"
       LINE_OPEN: "24"
-      LINE_CLOSE: "23"
+      LINE_CLOSE: "25"
       DEFAULT_PULSE_MS: "800"
       LINE_DI1: "17"
       DI1_ACTIVE_HIGH: "true"
