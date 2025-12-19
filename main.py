@@ -215,8 +215,8 @@ READ_TABLE = os.getenv("READ_TABLE", "holding").lower()  # holding | input
 REG_START = int(os.getenv("REG_START", "0"))
 REG_COUNT = int(os.getenv("REG_COUNT", "2"))
 
-TEMP_INDEX = int(os.getenv("TEMP_INDEX", "0"))
-HUMI_INDEX = int(os.getenv("HUMI_INDEX", "1"))
+TEMP_INDEX = int(os.getenv("TEMP_INDEX", "1"))
+HUMI_INDEX = int(os.getenv("HUMI_INDEX", "0"))
 SCALE_DIV = float(os.getenv("SCALE_DIV", "10"))
 
 INDOOR_ID = int(os.getenv("INDOOR_ID", "1"))
@@ -260,26 +260,10 @@ def read_raw_regs(unit_id: int) -> Tuple[int, ...]:
 #     temp = regs[TEMP_INDEX] / SCALE_DIV
 #     return humi, temp
 
-def to_humi_temp(regs: Tuple[int, ...]) -> Tuple[float, float]:
-    # คำนวณตาม index ที่ตั้งไว้ก่อน
-    humi_a = regs[HUMI_INDEX] / SCALE_DIV
-    temp_a = regs[TEMP_INDEX] / SCALE_DIV
-
-    # ถ้าค่าดูไม่สมเหตุสมผล (เช่น humi > 100 หรือ temp สูงเกินช่วงใช้งาน) ให้ลองสลับ
-    def plausible(h, t):
-        return (0.0 <= h <= 100.0) and (-40.0 <= t <= 85.0)
-
-    if plausible(humi_a, temp_a):
-        return humi_a, temp_a
-
-    # fallback: สลับตำแหน่ง (กันกรณี index/env ไม่ตรงหรือ register สลับ)
-    humi_b = regs[TEMP_INDEX] / SCALE_DIV
-    temp_b = regs[HUMI_INDEX] / SCALE_DIV
-    if plausible(humi_b, temp_b):
-        return humi_b, temp_b
-
-    # ถ้ายังไม่ plausible ก็คืนตามเดิมเพื่อให้เห็นว่ามีปัญหา upstream
-    return humi_a, temp_a
+def to_humi_temp(regs):
+    humi = regs[HUMI_INDEX] / SCALE_DIV
+    temp = regs[TEMP_INDEX] / SCALE_DIV
+    return humi, temp
 
 
 def calc_dewpoint(temp_c: float, rh: float) -> float:
