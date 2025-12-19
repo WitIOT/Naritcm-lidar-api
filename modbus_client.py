@@ -4,7 +4,7 @@ from typing import Tuple
 class RS485Modbus:
     def __init__(self, port:str="/dev/ttyACM0", baudrate:int=9600, parity:str='N', bytesize:int=8, stopbits:int=1, unit:int=1, timeout:float=1.0):
         self.client = ModbusSerialClient(
-            method="rtu",
+            # method="rtu",
             port=port,
             baudrate=baudrate,
             parity=parity,
