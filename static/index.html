@@ -2,26 +2,57 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"/>
-  <title>Realtime Temp & Humi</title>
-  <link rel="stylesheet" href="/static/styles.css?v=4">
+  <title>Realtime Temp, Humi & Dew Point</title>
+  <link rel="stylesheet" href="/static/styles.css?v=5">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
 </head>
 <body>
-  <h2>Realtime Temperature & Humidity
+  <h2>Realtime Temperature, Humidity & Dew Point
     <span id="status" class="badge">connecting...</span>
     <span id="raw" class="badge">raw: -</span>
   </h2>
+
+  <!-- Roof Control -->
   <div class="row">
-    <div class="card kpi"><b>Temperature (indoor)</b>: <span id="t_indoor">-</span> °C</div>
-    <div class="card kpi"><b>Humidity (indoor)</b>: <span id="h_indoor">-</span> %RH</div>
-    <div class="card kpi"><b>Temperature (outdoor)</b>: <span id="t_outdoor">-</span> °C</div>
-    <div class="card kpi"><b>Humidity (outdoor)</b>: <span id="h_outdoor">-</span> %RH</div>
+    <div class="card">
+      <div class="toolbar">
+        <b>Roof Control</b>
+        <span id="roof_state" class="badge">state: -</span>
+      </div>
+
+      <div class="btnrow">
+        <button id="btn_open"  class="btn btn-ok">Roof Open</button>
+        <button id="btn_close" class="btn btn-warn">Roof Close</button>
+        <button id="btn_stop"  class="btn">Stop</button>
+        <button id="btn_status" class="btn">Roof Status</button>
+      </div>
+
+      <div id="roof_msg" class="hint">-</div>
+    </div>
   </div>
+
+  <!-- KPIs -->
+  <div class="row">
+    <div class="card kpi"><b>Temp (indoor)</b>: <span id="t_indoor">-</span> °C</div>
+    <div class="card kpi"><b>Humi (indoor)</b>: <span id="h_indoor">-</span> %RH</div>
+    <div class="card kpi"><b>Dew Point (indoor)</b>: <span id="d_indoor">-</span> °C</div>
+
+    <div class="card kpi"><b>Temp (outdoor)</b>: <span id="t_outdoor">-</span> °C</div>
+    <div class="card kpi"><b>Humi (outdoor)</b>: <span id="h_outdoor">-</span> %RH</div>
+    <div class="card kpi"><b>Dew Point (outdoor)</b>: <span id="d_outdoor">-</span> °C</div>
+  </div>
+
+  <!-- Charts -->
   <div class="row">
     <div class="card"><canvas id="temp"></canvas></div>
     <div class="card"><canvas id="humi"></canvas></div>
   </div>
-  <script src="/static/app.js?v=4"></script>
+
+  <div class="row">
+    <div class="card"><canvas id="dew"></canvas></div>
+  </div>
+
+  <script src="/static/app.js?v=5"></script>
 </body>
 </html>
