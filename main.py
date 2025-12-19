@@ -211,7 +211,8 @@ def read_both():
         out["indoor"] = {"unit_id": INDOOR_ID, "raw": r1, "humi": round(h1, 1), "temp": round(t1, 1)}
     except Exception as e:
         out["indoor"] = {"unit_id": INDOOR_ID, "error": str(e)}
-        out["ok"] = False
+        out["ok"] = False\
+        
 
     try:
         h2, t2, r2 = read_sensor(OUTDOOR_ID)
