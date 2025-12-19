@@ -155,7 +155,7 @@ def door_status():
     return {"ok": True, "status": manager.status()}
 
 @app.post("/door/open")
-def door_open(body: PulseRequest | None = None, ms: int = Query(None, ge=1, le=5000)):
+def door_open(body: Optional[PulseRequest] = None, ms: int = Query(None, ge=1, le=5000)):
     pulse_ms = ms or (body.ms if body else None) or DEFAULT_PULSE_MS
     try:
         manager.pulse("open", pulse_ms)
@@ -164,7 +164,7 @@ def door_open(body: PulseRequest | None = None, ms: int = Query(None, ge=1, le=5
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/door/close")
-def door_close(body: PulseRequest | None = None, ms: int = Query(None, ge=1, le=5000)):
+def door_close(body: Optional[PulseRequest] = None, ms: int = Query(None, ge=1, le=5000)):
     pulse_ms = ms or (body.ms if body else None) or DEFAULT_PULSE_MS
     try:
         manager.pulse("close", pulse_ms)
