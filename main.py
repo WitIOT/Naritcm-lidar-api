@@ -29,7 +29,7 @@ INDOOR_ID  = int(os.getenv("INDOOR_ID", "1"))
 OUTDOOR_ID = int(os.getenv("OUTDOOR_ID", "2"))
 
 modbus = ModbusSerialClient(
-    method="rtu",
+    # method="rtu",
     port=SERIAL_PORT,
     baudrate=BAUDRATE,
     parity=PARITY,
