@@ -1,5 +1,6 @@
 import os
 import time
+import math
 import asyncio
 import threading
 from typing import Optional, Tuple, List, Dict, Any, Literal, Set
@@ -13,46 +14,45 @@ from periphery import GPIO
 from pymodbus.client import ModbusSerialClient
 
 
-# =========================
+# =========================================================
 # App
-# =========================
-app = FastAPI(title="NARIT CM LiDAR API (Door + Limit + RS485 Sensor)", version="3.0")
+# =========================================================
+app = FastAPI(
+    title="NARIT CM LiDAR API (Door + Limit + RS485 Sensor)",
+    version="3.1"
+)
 
-
-# =========================
-# Static (sensor web UI)
-# - ให้เหมือนแนวคิดใน sensor.py: มีหน้าเว็บ
-# - โฟลเดอร์โปรเจกต์ของคุณมี "static" อยู่แล้ว
-# =========================
+# =========================================================
+# Static (Sensor Web UI – ถ้ามี)
+# =========================================================
 STATIC_DIR = os.getenv("STATIC_DIR", "static")
 if os.path.isdir(STATIC_DIR):
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
+
 @app.get("/")
 def root():
-    # ถ้ามี static/index.html จะส่งหน้าเว็บให้
     index_path = os.path.join(STATIC_DIR, "index.html")
     if os.path.isfile(index_path):
         return FileResponse(index_path)
-    # ไม่มีไฟล์ก็ยังให้ API ทำงานได้
     return {"ok": True, "service": "naritcm-lidar-api", "docs": "/docs"}
 
 
-# =========================
+# =========================================================
 # Health
-# =========================
+# =========================================================
 @app.get("/health")
 def health():
-    return {"ok": True, "service": "naritcm-lidar-api", "version": "3.0"}
+    return {"ok": True, "service": "naritcm-lidar-api", "version": "3.1"}
 
 
-# =========================
+# =========================================================
 # Door + Limit (เหมือน roof-control.py)
-# =========================
+# =========================================================
 GPIO_CHIP = os.getenv("GPIO_CHIP", "/dev/gpiochip0")
 
 LINE_OPEN  = int(os.getenv("LINE_OPEN",  "24"))
-LINE_CLOSE = int(os.getenv("LINE_CLOSE", "25"))
+LINE_CLOSE = int(os.getenv("LINE_CLOSE", "23"))
 DEFAULT_PULSE_MS = int(os.getenv("DEFAULT_PULSE_MS", "800"))
 
 LINE_DI1 = int(os.getenv("LINE_DI1", "17"))
@@ -63,7 +63,9 @@ DI1_DEBOUNCE_MS = int(os.getenv("DI1_DEBOUNCE_MS", "50"))
 class DOManager:
     def __init__(self, chip_path: str, line_open: int, line_close: int):
         self.lock = threading.Lock()
-        self.state: Literal["idle", "opening", "closing", "holding_open", "holding_close"] = "idle"
+        self.state: Literal[
+            "idle", "opening", "closing", "holding_open", "holding_close"
+        ] = "idle"
         self.gpio_open = GPIO(chip_path, line_open, "out")
         self.gpio_close = GPIO(chip_path, line_close, "out")
         self.all_low()
@@ -143,7 +145,10 @@ def door_status():
 
 
 @app.post("/door/open")
-def door_open(body: Optional[PulseRequest] = None, ms: int = Query(None, ge=1, le=5000)):
+def door_open(
+    body: Optional[PulseRequest] = None,
+    ms: int = Query(None, ge=1, le=5000)
+):
     pulse_ms = ms or (body.ms if body and body.ms else None) or DEFAULT_PULSE_MS
     try:
         manager.pulse("open", pulse_ms)
@@ -153,7 +158,10 @@ def door_open(body: Optional[PulseRequest] = None, ms: int = Query(None, ge=1, l
 
 
 @app.post("/door/close")
-def door_close(body: Optional[PulseRequest] = None, ms: int = Query(None, ge=1, le=5000)):
+def door_close(
+    body: Optional[PulseRequest] = None,
+    ms: int = Query(None, ge=1, le=5000)
+):
     pulse_ms = ms or (body.ms if body and body.ms else None) or DEFAULT_PULSE_MS
     try:
         manager.pulse("close", pulse_ms)
@@ -193,9 +201,9 @@ def limit_status():
     }
 
 
-# =========================
-# Sensor (เหมือน sensor.py)
-# =========================
+# =========================================================
+# Sensor (RS485 + Dew Point)
+# =========================================================
 SERIAL_PORT = os.getenv("SERIAL_PORT", "/dev/ttyACM0")
 BAUDRATE = int(os.getenv("BAUDRATE", "9600"))
 PARITY = os.getenv("PARITY", "N")
@@ -228,77 +236,98 @@ modbus = ModbusSerialClient(
 _modbus_lock = threading.Lock()
 
 
-def ensure_connected() -> None:
-    # ป้องกัน connect ซ้อนกัน
+def ensure_connected():
     with _modbus_lock:
         if not modbus.connected:
             if not modbus.connect():
                 raise RuntimeError("Modbus not connected")
 
 
-def read_raw_regs(unit: int, address: Optional[int] = None, count: Optional[int] = None) -> Tuple[int, ...]:
+def read_raw_regs(unit_id: int) -> Tuple[int, ...]:
     ensure_connected()
-    addr = REG_START if address is None else address
-    cnt = REG_COUNT if count is None else count
-
-    # ป้องกันอ่านพร้อมกัน
     with _modbus_lock:
         if READ_TABLE == "input":
-            rr = modbus.read_input_registers(addr, cnt, slave=unit)   # FC04
+            rr = modbus.read_input_registers(REG_START, REG_COUNT, slave=unit_id)
         else:
-            rr = modbus.read_holding_registers(addr, cnt, slave=unit) # FC03
-
+            rr = modbus.read_holding_registers(REG_START, REG_COUNT, slave=unit_id)
     if rr.isError():
         raise RuntimeError(f"Modbus Error: {rr}")
     return tuple(rr.registers)
 
 
-def to_humi_temp(regs: List[int] or Tuple[int, ...]) -> Tuple[float, float]:
-    need = max(HUMI_INDEX, TEMP_INDEX) + 1
-    if len(regs) < need:
-        raise ValueError(f"Need at least {need} registers, got {len(regs)}")
+def to_humi_temp(regs: Tuple[int, ...]) -> Tuple[float, float]:
     humi = regs[HUMI_INDEX] / SCALE_DIV
     temp = regs[TEMP_INDEX] / SCALE_DIV
     return humi, temp
 
 
+def calc_dewpoint(temp_c: float, rh: float) -> float:
+    """
+    Dew point (°C) using Magnus formula
+    """
+    if rh <= 0:
+        return float("nan")
+    a = 17.62
+    b = 243.12
+    gamma = math.log(rh / 100.0) + (a * temp_c) / (b + temp_c)
+    return (b * gamma) / (a - gamma)
+
+
 @app.get("/api/sensor/{unit_id}")
-def read_sensor_unit(unit_id: int) -> Dict[str, Any]:
+def read_sensor_unit(unit_id: int):
     try:
-        regs = read_raw_regs(unit=unit_id)
+        regs = read_raw_regs(unit_id)
         humi, temp = to_humi_temp(regs)
-        name = "indoor" if unit_id == INDOOR_ID else ("outdoor" if unit_id == OUTDOOR_ID else f"unit_{unit_id}")
+        dew = calc_dewpoint(temp, humi)
+        name = "indoor" if unit_id == INDOOR_ID else (
+            "outdoor" if unit_id == OUTDOOR_ID else f"unit_{unit_id}"
+        )
         return {
             "ok": True,
             "name": name,
             "unit_id": unit_id,
-            "table": READ_TABLE,
-            "start": REG_START,
-            "count": REG_COUNT,
             "raw_registers": regs,
             "humi": round(humi, 1),
             "temp": round(temp, 1),
+            "dewpoint": round(dew, 1),
         }
     except Exception as e:
-        return JSONResponse(status_code=500, content={"ok": False, "error": str(e), "unit_id": unit_id})
+        return JSONResponse(
+            status_code=500,
+            content={"ok": False, "unit_id": unit_id, "error": str(e)}
+        )
 
 
 @app.get("/api/sensor")
-def read_sensor_both() -> Dict[str, Any]:
-    out: Dict[str, Any] = {"ok": True, "table": READ_TABLE, "start": REG_START, "count": REG_COUNT,
-                          "indoor": None, "outdoor": None}
+def read_sensor_both():
+    out: Dict[str, Any] = {"ok": True}
+
     try:
-        regs1 = read_raw_regs(unit=INDOOR_ID)
-        h1, t1 = to_humi_temp(regs1)
-        out["indoor"] = {"raw": regs1, "humi": round(h1, 1), "temp": round(t1, 1), "unit_id": INDOOR_ID}
+        r1 = read_raw_regs(INDOOR_ID)
+        h1, t1 = to_humi_temp(r1)
+        d1 = calc_dewpoint(t1, h1)
+        out["indoor"] = {
+            "unit_id": INDOOR_ID,
+            "raw": r1,
+            "humi": round(h1, 1),
+            "temp": round(t1, 1),
+            "dewpoint": round(d1, 1),
+        }
     except Exception as e:
         out["indoor"] = {"unit_id": INDOOR_ID, "error": str(e)}
         out["ok"] = False
 
     try:
-        regs2 = read_raw_regs(unit=OUTDOOR_ID)
-        h2, t2 = to_humi_temp(regs2)
-        out["outdoor"] = {"raw": regs2, "humi": round(h2, 1), "temp": round(t2, 1), "unit_id": OUTDOOR_ID}
+        r2 = read_raw_regs(OUTDOOR_ID)
+        h2, t2 = to_humi_temp(r2)
+        d2 = calc_dewpoint(t2, h2)
+        out["outdoor"] = {
+            "unit_id": OUTDOOR_ID,
+            "raw": r2,
+            "humi": round(h2, 1),
+            "temp": round(t2, 1),
+            "dewpoint": round(d2, 1),
+        }
     except Exception as e:
         out["outdoor"] = {"unit_id": OUTDOOR_ID, "error": str(e)}
         out["ok"] = False
@@ -306,7 +335,9 @@ def read_sensor_both() -> Dict[str, Any]:
     return out
 
 
-# ---- WebSocket realtime ----
+# =========================================================
+# WebSocket Sensor Realtime
+# =========================================================
 ws_clients: Set[WebSocket] = set()
 
 
@@ -315,7 +346,6 @@ async def ws_sensor(ws: WebSocket):
     await ws.accept()
     ws_clients.add(ws)
     try:
-        # client ส่งอะไรมาก็ได้ (หรือไม่ส่งก็ได้) เราแค่คงการเชื่อมต่อ
         while True:
             await ws.receive_text()
     except WebSocketDisconnect:
@@ -326,42 +356,46 @@ async def ws_sensor(ws: WebSocket):
 
 async def sensor_poll_loop():
     while True:
-        payload: Dict[str, Any] = {"ts": int(time.time() * 1000), "ok": True}
+        payload = {"ts": int(time.time() * 1000), "ok": True}
 
-        def pack(unit_id: int, label: str) -> Dict[str, Any]:
-            try:
-                regs = read_raw_regs(unit=unit_id)
-                h, t = to_humi_temp(regs)
-                return {label: {"unit_id": unit_id, "raw": list(regs), "humi": round(h, 1), "temp": round(t, 1)}}
-            except Exception as e:
-                return {label: {"unit_id": unit_id, "error": str(e)}}
+        def pack(unit_id: int):
+            regs = read_raw_regs(unit_id)
+            h, t = to_humi_temp(regs)
+            d = calc_dewpoint(t, h)
+            return {
+                "unit_id": unit_id,
+                "temp": round(t, 1),
+                "humi": round(h, 1),
+                "dewpoint": round(d, 1),
+            }
 
-        payload.update(pack(INDOOR_ID, "indoor"))
-        payload.update(pack(OUTDOOR_ID, "outdoor"))
-
-        if ("error" in payload.get("indoor", {})) or ("error" in payload.get("outdoor", {})):
+        try:
+            payload["indoor"] = pack(INDOOR_ID)
+            payload["outdoor"] = pack(OUTDOOR_ID)
+        except Exception as e:
             payload["ok"] = False
+            payload["error"] = str(e)
 
-        stale = []
-        for ws in list(ws_clients):
+        dead = []
+        for ws in ws_clients:
             try:
                 await ws.send_json(payload)
             except Exception:
-                stale.append(ws)
+                dead.append(ws)
 
-        for ws in stale:
+        for ws in dead:
             ws_clients.discard(ws)
 
         await asyncio.sleep(POLL_MS / 1000.0)
 
 
 @app.on_event("startup")
-async def on_startup():
+async def startup_event():
     asyncio.create_task(sensor_poll_loop())
 
 
 @app.on_event("shutdown")
-async def on_shutdown():
+async def shutdown_event():
     try:
         modbus.close()
     except Exception:
