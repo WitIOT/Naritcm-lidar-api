@@ -30,8 +30,8 @@ services:
       TEMP_INDEX: "1"
       HUMI_INDEX: "0"
       SCALE_DIV: "10"
-      INDOOR_ID: "1"
-      OUTDOOR_ID: "2"
+      INDOOR_ID: "2"
+      OUTDOOR_ID: "1"
       POLL_MS: "1000"
 
       # ===== GPIO Door/Limit =====
