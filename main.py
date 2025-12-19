@@ -299,40 +299,50 @@ def read_sensor_unit(unit_id: int):
 
 
 @app.get("/api/sensor")
-def read_sensor_both():
-    out: Dict[str, Any] = {"ok": True}
+def read_sensor_both() -> Dict[str, Any]:
+    out = {
+        "ok": True,
+        "table": READ_TABLE,
+        "start": REG_START,
+        "count": REG_COUNT,
+        "indoor": None,
+        "outdoor": None
+    }
 
     try:
-        r1 = read_raw_regs(INDOOR_ID)
-        h1, t1 = to_humi_temp(r1)
+        regs1 = read_raw_regs(unit=INDOOR_ID)
+        h1, t1 = to_humi_temp(regs1)   # humi, temp (เหมือน sensor.py เดิม)
         d1 = calc_dewpoint(t1, h1)
+
         out["indoor"] = {
-            "unit_id": INDOOR_ID,
-            "raw": r1,
+            "raw": regs1,
             "humi": round(h1, 1),
             "temp": round(t1, 1),
             "dewpoint": round(d1, 1),
+            "unit_id": INDOOR_ID
         }
     except Exception as e:
-        out["indoor"] = {"unit_id": INDOOR_ID, "error": str(e)}
+        out["indoor"] = {"error": str(e), "unit_id": INDOOR_ID}
         out["ok"] = False
 
     try:
-        r2 = read_raw_regs(OUTDOOR_ID)
-        h2, t2 = to_humi_temp(r2)
+        regs2 = read_raw_regs(unit=OUTDOOR_ID)
+        h2, t2 = to_humi_temp(regs2)   # humi, temp
         d2 = calc_dewpoint(t2, h2)
+
         out["outdoor"] = {
-            "unit_id": OUTDOOR_ID,
-            "raw": r2,
+            "raw": regs2,
             "humi": round(h2, 1),
             "temp": round(t2, 1),
             "dewpoint": round(d2, 1),
+            "unit_id": OUTDOOR_ID
         }
     except Exception as e:
-        out["outdoor"] = {"unit_id": OUTDOOR_ID, "error": str(e)}
+        out["outdoor"] = {"error": str(e), "unit_id": OUTDOOR_ID}
         out["ok"] = False
 
     return out
+
 
 
 # =========================================================
