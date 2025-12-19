@@ -42,3 +42,25 @@ services:
       LINE_DI1: "17"
       DI1_ACTIVE_HIGH: "true"
       DI1_DEBOUNCE_MS: "50"
+  
+  sensor-writer:
+    build: ./writer
+    container_name: sensor-writer
+    restart: unless-stopped
+
+    environment:
+      SENSOR_API_URL: "http://naritcm-lidar-api:8000/api/sensor"
+      POLL_SEC: "1.0"
+      HTTP_TIMEOUT_SEC: "2.5"
+
+      # InfluxDB container อื่น (เข้าผ่าน host port)
+      INFLUX_URL: "http://192.168.49.8:8086"
+      INFLUX_ORG: "Narit"
+      INFLUX_BUCKET: "Lidar"
+      MEASUREMENT: "room1"
+
+      # ต้องใส่ Token ของ InfluxDB 2.x
+      INFLUX_TOKEN: "kTRPZoj7DxBnKY4xDy5kJty6KZhv4BXg5W9JiUGdh9kdaPQr5RF9lic0TYx_3XucOqNHnGlydlTQwFiwuPS-6Q=="
+
+    depends_on:
+      - naritcm-lidar-api
