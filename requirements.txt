@@ -1,0 +1,10 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+
+pymodbus==3.7.4
+pyserial==3.5
+
+python-periphery==2.4.1
+
+pydantic==2.10.3
+typing-extensions>=4.9.0
