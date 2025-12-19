@@ -1,0 +1,21 @@
+version: "3.9"
+services:
+  rs485_api:
+    build: .
+    ports:
+      - "8000:8000"
+    devices:
+      - "/dev/ttyACM0:/dev/ttyACM0"
+    restart: always
+    environment:
+      - SERIAL_PORT=/dev/ttyACM0
+      - BAUDRATE=9600
+      - READ_TABLE=holding
+      - REG_START=0
+      - REG_COUNT=2
+      - TEMP_INDEX=1
+      - HUMI_INDEX=0
+      - SCALE_DIV=10
+      - INDOOR_ID=2
+      - OUTDOOR_ID=1
+      - POLL_MS=1000

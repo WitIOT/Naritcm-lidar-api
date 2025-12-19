@@ -1,0 +1,11 @@
+services:
+  iriv-door-api:
+    build: .
+    container_name: iriv-door-api
+    restart: unless-stopped
+    env_file: .env
+    network_mode: host
+    privileged: true
+    # หรือระบุ device โดยตรงแทน privileged ได้ เช่น:
+    # devices:
+    #   - /dev/gpiochip0:/dev/gpiochip0
