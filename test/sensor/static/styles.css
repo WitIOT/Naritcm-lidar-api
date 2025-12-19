@@ -1,0 +1,30 @@
+body {
+  font-family: sans-serif;
+  margin: 20px;
+  background: #f7f7f7;
+}
+h2 { margin-bottom: 10px; }
+.badge {
+  display: inline-block;
+  padding: 3px 6px;
+  margin-left: 5px;
+  border-radius: 4px;
+  background: #ddd;
+  font-size: 0.8em;
+}
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.card {
+  background: white;
+  border-radius: 6px;
+  padding: 10px;
+  margin: 5px;
+  flex: 1;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+}
+.kpi { font-size: 1.1em; }
+canvas { width:100% !important; height:300px !important; }
+

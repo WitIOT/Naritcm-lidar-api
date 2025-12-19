@@ -1,86 +1,76 @@
 import os
 import time
+import asyncio
 import threading
-from typing import Literal, Optional, Tuple
+from typing import Optional, Tuple, List, Dict, Any, Literal, Set
 
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from periphery import GPIO
 from pymodbus.client import ModbusSerialClient
 
-app = FastAPI(title="IRIV PiControl API", version="2.1")
 
 # =========================
-# RS485 / Modbus (Temp&Humi)
+# App
 # =========================
-SERIAL_PORT = os.getenv("SERIAL_PORT", "/dev/ttyACM0")
-BAUDRATE = int(os.getenv("BAUDRATE", "9600"))
-PARITY = os.getenv("PARITY", "N")
-BYTESIZE = int(os.getenv("BYTESIZE", "8"))
-STOPBITS = int(os.getenv("STOPBITS", "1"))
-TIMEOUT_S = float(os.getenv("TIMEOUT_S", "1.0"))
+app = FastAPI(title="NARIT CM LiDAR API (Door + Limit + RS485 Sensor)", version="3.0")
 
-REG_START = int(os.getenv("REG_START", "0"))
-REG_COUNT = int(os.getenv("REG_COUNT", "2"))
-TEMP_INDEX = int(os.getenv("TEMP_INDEX", "0"))
-HUMI_INDEX = int(os.getenv("HUMI_INDEX", "1"))
-SCALE_DIV = float(os.getenv("SCALE_DIV", "10"))
-
-INDOOR_ID = int(os.getenv("INDOOR_ID", "1"))
-OUTDOOR_ID = int(os.getenv("OUTDOOR_ID", "2"))
-
-modbus = ModbusSerialClient(
-    port=SERIAL_PORT,
-    baudrate=BAUDRATE,
-    parity=PARITY,
-    bytesize=BYTESIZE,
-    stopbits=STOPBITS,
-    timeout=TIMEOUT_S,
-)
-
-def read_sensor(unit_id: int) -> Tuple[float, float, Tuple[int, ...]]:
-    if not modbus.connected and not modbus.connect():
-        raise RuntimeError("Modbus not connected")
-
-    rr = modbus.read_holding_registers(REG_START, REG_COUNT, slave=unit_id)
-    if rr.isError():
-        raise RuntimeError(str(rr))
-
-    regs = tuple(rr.registers)
-    need = max(HUMI_INDEX, TEMP_INDEX) + 1
-    if len(regs) < need:
-        raise RuntimeError(f"Need at least {need} registers, got {len(regs)}")
-
-    humi = regs[HUMI_INDEX] / SCALE_DIV
-    temp = regs[TEMP_INDEX] / SCALE_DIV
-    return humi, temp, regs
 
 # =========================
-# GPIO (Door + Limit Switch)
+# Static (sensor web UI)
+# - ให้เหมือนแนวคิดใน sensor.py: มีหน้าเว็บ
+# - โฟลเดอร์โปรเจกต์ของคุณมี "static" อยู่แล้ว
+# =========================
+STATIC_DIR = os.getenv("STATIC_DIR", "static")
+if os.path.isdir(STATIC_DIR):
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+@app.get("/")
+def root():
+    # ถ้ามี static/index.html จะส่งหน้าเว็บให้
+    index_path = os.path.join(STATIC_DIR, "index.html")
+    if os.path.isfile(index_path):
+        return FileResponse(index_path)
+    # ไม่มีไฟล์ก็ยังให้ API ทำงานได้
+    return {"ok": True, "service": "naritcm-lidar-api", "docs": "/docs"}
+
+
+# =========================
+# Health
+# =========================
+@app.get("/health")
+def health():
+    return {"ok": True, "service": "naritcm-lidar-api", "version": "3.0"}
+
+
+# =========================
+# Door + Limit (เหมือน roof-control.py)
 # =========================
 GPIO_CHIP = os.getenv("GPIO_CHIP", "/dev/gpiochip0")
 
-LINE_OPEN = int(os.getenv("LINE_OPEN", "24")) # DI1
-LINE_CLOSE = int(os.getenv("LINE_CLOSE", "25")) # DI2
+LINE_OPEN  = int(os.getenv("LINE_OPEN",  "24"))
+LINE_CLOSE = int(os.getenv("LINE_CLOSE", "25"))
 DEFAULT_PULSE_MS = int(os.getenv("DEFAULT_PULSE_MS", "800"))
 
 LINE_DI1 = int(os.getenv("LINE_DI1", "17"))
 DI1_ACTIVE_HIGH = os.getenv("DI1_ACTIVE_HIGH", "true").lower() == "true"
 DI1_DEBOUNCE_MS = int(os.getenv("DI1_DEBOUNCE_MS", "50"))
 
+
 class DOManager:
     def __init__(self, chip_path: str, line_open: int, line_close: int):
         self.lock = threading.Lock()
         self.state: Literal["idle", "opening", "closing", "holding_open", "holding_close"] = "idle"
-        self.do_open = GPIO(chip_path, line_open, "out")
-        self.do_close = GPIO(chip_path, line_close, "out")
+        self.gpio_open = GPIO(chip_path, line_open, "out")
+        self.gpio_close = GPIO(chip_path, line_close, "out")
         self.all_low()
 
     def all_low(self):
-        self.do_open.write(False)
-        self.do_close.write(False)
+        self.gpio_open.write(False)
+        self.gpio_close.write(False)
 
     def pulse(self, target: Literal["open", "close"], ms: int):
         if not (1 <= ms <= 5000):
@@ -89,10 +79,10 @@ class DOManager:
             self.all_low()
             if target == "open":
                 self.state = "opening"
-                self.do_open.write(True)
+                self.gpio_open.write(True)
             else:
                 self.state = "closing"
-                self.do_close.write(True)
+                self.gpio_close.write(True)
         try:
             time.sleep(ms / 1000.0)
         finally:
@@ -104,10 +94,10 @@ class DOManager:
         with self.lock:
             self.all_low()
             if target == "open":
-                self.do_open.write(True)
+                self.gpio_open.write(True)
                 self.state = "holding_open"
             else:
-                self.do_close.write(True)
+                self.gpio_close.write(True)
                 self.state = "holding_close"
 
     def stop(self):
@@ -117,6 +107,7 @@ class DOManager:
 
     def status(self):
         return {"state": self.state}
+
 
 class DIReader:
     def __init__(self, chip_path: str, line_no: int, active_high: bool, debounce_ms: int):
@@ -137,40 +128,39 @@ class DIReader:
         raw_level = 1 if votes >= 2 else 0
         return bool(raw_level if self.active_high else (1 - raw_level))
 
+
 manager = DOManager(GPIO_CHIP, LINE_OPEN, LINE_CLOSE)
 di1 = DIReader(GPIO_CHIP, LINE_DI1, DI1_ACTIVE_HIGH, DI1_DEBOUNCE_MS)
+
 
 class PulseRequest(BaseModel):
     ms: Optional[int] = None
 
-# =========================
-# Routes (Door / Limit)
-# =========================
-@app.get("/health")
-def health():
-    return {"ok": True, "service": "iriv-picontrol-api", "version": app.version}
 
 @app.get("/door/status")
 def door_status():
     return {"ok": True, "status": manager.status()}
 
+
 @app.post("/door/open")
 def door_open(body: Optional[PulseRequest] = None, ms: int = Query(None, ge=1, le=5000)):
-    pulse_ms = ms or (body.ms if body else None) or DEFAULT_PULSE_MS
+    pulse_ms = ms or (body.ms if body and body.ms else None) or DEFAULT_PULSE_MS
     try:
         manager.pulse("open", pulse_ms)
         return {"ok": True, "action": "open", "pulse_ms": pulse_ms}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @app.post("/door/close")
 def door_close(body: Optional[PulseRequest] = None, ms: int = Query(None, ge=1, le=5000)):
-    pulse_ms = ms or (body.ms if body else None) or DEFAULT_PULSE_MS
+    pulse_ms = ms or (body.ms if body and body.ms else None) or DEFAULT_PULSE_MS
     try:
         manager.pulse("close", pulse_ms)
         return {"ok": True, "action": "close", "pulse_ms": pulse_ms}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/door/hold")
 def door_hold(target: Literal["open", "close"]):
@@ -180,10 +170,12 @@ def door_hold(target: Literal["open", "close"]):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @app.post("/door/stop")
 def door_stop():
     manager.stop()
     return {"ok": True, "action": "stop"}
+
 
 @app.get("/limit/status")
 def limit_status():
@@ -200,27 +192,177 @@ def limit_status():
         },
     }
 
+
 # =========================
-# Routes (Sensor)
+# Sensor (เหมือน sensor.py)
 # =========================
-@app.get("/api/sensor")
-def read_both():
-    out = {"ok": True, "indoor": None, "outdoor": None}
+SERIAL_PORT = os.getenv("SERIAL_PORT", "/dev/ttyACM0")
+BAUDRATE = int(os.getenv("BAUDRATE", "9600"))
+PARITY = os.getenv("PARITY", "N")
+BYTESIZE = int(os.getenv("BYTESIZE", "8"))
+STOPBITS = int(os.getenv("STOPBITS", "1"))
+TIMEOUT_S = float(os.getenv("TIMEOUT_S", "1.0"))
+
+READ_TABLE = os.getenv("READ_TABLE", "holding").lower()  # holding | input
+REG_START = int(os.getenv("REG_START", "0"))
+REG_COUNT = int(os.getenv("REG_COUNT", "2"))
+
+TEMP_INDEX = int(os.getenv("TEMP_INDEX", "0"))
+HUMI_INDEX = int(os.getenv("HUMI_INDEX", "1"))
+SCALE_DIV = float(os.getenv("SCALE_DIV", "10"))
+
+INDOOR_ID = int(os.getenv("INDOOR_ID", "1"))
+OUTDOOR_ID = int(os.getenv("OUTDOOR_ID", "2"))
+
+POLL_MS = int(os.getenv("POLL_MS", "1000"))
+
+modbus = ModbusSerialClient(
+    port=SERIAL_PORT,
+    baudrate=BAUDRATE,
+    bytesize=BYTESIZE,
+    parity=PARITY,
+    stopbits=STOPBITS,
+    timeout=TIMEOUT_S,
+)
+
+_modbus_lock = threading.Lock()
+
+
+def ensure_connected() -> None:
+    # ป้องกัน connect ซ้อนกัน
+    with _modbus_lock:
+        if not modbus.connected:
+            if not modbus.connect():
+                raise RuntimeError("Modbus not connected")
+
+
+def read_raw_regs(unit: int, address: Optional[int] = None, count: Optional[int] = None) -> Tuple[int, ...]:
+    ensure_connected()
+    addr = REG_START if address is None else address
+    cnt = REG_COUNT if count is None else count
+
+    # ป้องกันอ่านพร้อมกัน
+    with _modbus_lock:
+        if READ_TABLE == "input":
+            rr = modbus.read_input_registers(addr, cnt, slave=unit)   # FC04
+        else:
+            rr = modbus.read_holding_registers(addr, cnt, slave=unit) # FC03
+
+    if rr.isError():
+        raise RuntimeError(f"Modbus Error: {rr}")
+    return tuple(rr.registers)
+
+
+def to_humi_temp(regs: List[int] or Tuple[int, ...]) -> Tuple[float, float]:
+    need = max(HUMI_INDEX, TEMP_INDEX) + 1
+    if len(regs) < need:
+        raise ValueError(f"Need at least {need} registers, got {len(regs)}")
+    humi = regs[HUMI_INDEX] / SCALE_DIV
+    temp = regs[TEMP_INDEX] / SCALE_DIV
+    return humi, temp
+
+
+@app.get("/api/sensor/{unit_id}")
+def read_sensor_unit(unit_id: int) -> Dict[str, Any]:
     try:
-        h1, t1, r1 = read_sensor(INDOOR_ID)
-        out["indoor"] = {"unit_id": INDOOR_ID, "raw": r1, "humi": round(h1, 1), "temp": round(t1, 1)}
+        regs = read_raw_regs(unit=unit_id)
+        humi, temp = to_humi_temp(regs)
+        name = "indoor" if unit_id == INDOOR_ID else ("outdoor" if unit_id == OUTDOOR_ID else f"unit_{unit_id}")
+        return {
+            "ok": True,
+            "name": name,
+            "unit_id": unit_id,
+            "table": READ_TABLE,
+            "start": REG_START,
+            "count": REG_COUNT,
+            "raw_registers": regs,
+            "humi": round(humi, 1),
+            "temp": round(temp, 1),
+        }
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"ok": False, "error": str(e), "unit_id": unit_id})
+
+
+@app.get("/api/sensor")
+def read_sensor_both() -> Dict[str, Any]:
+    out: Dict[str, Any] = {"ok": True, "table": READ_TABLE, "start": REG_START, "count": REG_COUNT,
+                          "indoor": None, "outdoor": None}
+    try:
+        regs1 = read_raw_regs(unit=INDOOR_ID)
+        h1, t1 = to_humi_temp(regs1)
+        out["indoor"] = {"raw": regs1, "humi": round(h1, 1), "temp": round(t1, 1), "unit_id": INDOOR_ID}
     except Exception as e:
         out["indoor"] = {"unit_id": INDOOR_ID, "error": str(e)}
-        out["ok"] = False\
-        
+        out["ok"] = False
 
     try:
-        h2, t2, r2 = read_sensor(OUTDOOR_ID)
-        out["outdoor"] = {"unit_id": OUTDOOR_ID, "raw": r2, "humi": round(h2, 1), "temp": round(t2, 1)}
+        regs2 = read_raw_regs(unit=OUTDOOR_ID)
+        h2, t2 = to_humi_temp(regs2)
+        out["outdoor"] = {"raw": regs2, "humi": round(h2, 1), "temp": round(t2, 1), "unit_id": OUTDOOR_ID}
     except Exception as e:
         out["outdoor"] = {"unit_id": OUTDOOR_ID, "error": str(e)}
         out["ok"] = False
 
-    if out["ok"]:
-        return out
-    return JSONResponse(status_code=500, content=out)
+    return out
+
+
+# ---- WebSocket realtime ----
+ws_clients: Set[WebSocket] = set()
+
+
+@app.websocket("/ws/sensor")
+async def ws_sensor(ws: WebSocket):
+    await ws.accept()
+    ws_clients.add(ws)
+    try:
+        # client ส่งอะไรมาก็ได้ (หรือไม่ส่งก็ได้) เราแค่คงการเชื่อมต่อ
+        while True:
+            await ws.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        ws_clients.discard(ws)
+
+
+async def sensor_poll_loop():
+    while True:
+        payload: Dict[str, Any] = {"ts": int(time.time() * 1000), "ok": True}
+
+        def pack(unit_id: int, label: str) -> Dict[str, Any]:
+            try:
+                regs = read_raw_regs(unit=unit_id)
+                h, t = to_humi_temp(regs)
+                return {label: {"unit_id": unit_id, "raw": list(regs), "humi": round(h, 1), "temp": round(t, 1)}}
+            except Exception as e:
+                return {label: {"unit_id": unit_id, "error": str(e)}}
+
+        payload.update(pack(INDOOR_ID, "indoor"))
+        payload.update(pack(OUTDOOR_ID, "outdoor"))
+
+        if ("error" in payload.get("indoor", {})) or ("error" in payload.get("outdoor", {})):
+            payload["ok"] = False
+
+        stale = []
+        for ws in list(ws_clients):
+            try:
+                await ws.send_json(payload)
+            except Exception:
+                stale.append(ws)
+
+        for ws in stale:
+            ws_clients.discard(ws)
+
+        await asyncio.sleep(POLL_MS / 1000.0)
+
+
+@app.on_event("startup")
+async def on_startup():
+    asyncio.create_task(sensor_poll_loop())
+
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    try:
+        modbus.close()
+    except Exception:
+        pass
