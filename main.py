@@ -255,10 +255,31 @@ def read_raw_regs(unit_id: int) -> Tuple[int, ...]:
     return tuple(rr.registers)
 
 
+# def to_humi_temp(regs: Tuple[int, ...]) -> Tuple[float, float]:
+#     humi = regs[HUMI_INDEX] / SCALE_DIV
+#     temp = regs[TEMP_INDEX] / SCALE_DIV
+#     return humi, temp
+
 def to_humi_temp(regs: Tuple[int, ...]) -> Tuple[float, float]:
-    humi = regs[HUMI_INDEX] / SCALE_DIV
-    temp = regs[TEMP_INDEX] / SCALE_DIV
-    return humi, temp
+    # คำนวณตาม index ที่ตั้งไว้ก่อน
+    humi_a = regs[HUMI_INDEX] / SCALE_DIV
+    temp_a = regs[TEMP_INDEX] / SCALE_DIV
+
+    # ถ้าค่าดูไม่สมเหตุสมผล (เช่น humi > 100 หรือ temp สูงเกินช่วงใช้งาน) ให้ลองสลับ
+    def plausible(h, t):
+        return (0.0 <= h <= 100.0) and (-40.0 <= t <= 85.0)
+
+    if plausible(humi_a, temp_a):
+        return humi_a, temp_a
+
+    # fallback: สลับตำแหน่ง (กันกรณี index/env ไม่ตรงหรือ register สลับ)
+    humi_b = regs[TEMP_INDEX] / SCALE_DIV
+    temp_b = regs[HUMI_INDEX] / SCALE_DIV
+    if plausible(humi_b, temp_b):
+        return humi_b, temp_b
+
+    # ถ้ายังไม่ plausible ก็คืนตามเดิมเพื่อให้เห็นว่ามีปัญหา upstream
+    return humi_a, temp_a
 
 
 def calc_dewpoint(temp_c: float, rh: float) -> float:
@@ -299,50 +320,40 @@ def read_sensor_unit(unit_id: int):
 
 
 @app.get("/api/sensor")
-def read_sensor_both() -> Dict[str, Any]:
-    out = {
-        "ok": True,
-        "table": READ_TABLE,
-        "start": REG_START,
-        "count": REG_COUNT,
-        "indoor": None,
-        "outdoor": None
-    }
+def read_sensor_both():
+    out: Dict[str, Any] = {"ok": True}
 
     try:
-        regs1 = read_raw_regs(unit=INDOOR_ID)
-        h1, t1 = to_humi_temp(regs1)   # humi, temp (เหมือน sensor.py เดิม)
+        r1 = read_raw_regs(INDOOR_ID)
+        h1, t1 = to_humi_temp(r1)
         d1 = calc_dewpoint(t1, h1)
-
         out["indoor"] = {
-            "raw": regs1,
+            "unit_id": INDOOR_ID,
+            "raw": r1,
             "humi": round(h1, 1),
             "temp": round(t1, 1),
             "dewpoint": round(d1, 1),
-            "unit_id": INDOOR_ID
         }
     except Exception as e:
-        out["indoor"] = {"error": str(e), "unit_id": INDOOR_ID}
+        out["indoor"] = {"unit_id": INDOOR_ID, "error": str(e)}
         out["ok"] = False
 
     try:
-        regs2 = read_raw_regs(unit=OUTDOOR_ID)
-        h2, t2 = to_humi_temp(regs2)   # humi, temp
+        r2 = read_raw_regs(OUTDOOR_ID)
+        h2, t2 = to_humi_temp(r2)
         d2 = calc_dewpoint(t2, h2)
-
         out["outdoor"] = {
-            "raw": regs2,
+            "unit_id": OUTDOOR_ID,
+            "raw": r2,
             "humi": round(h2, 1),
             "temp": round(t2, 1),
             "dewpoint": round(d2, 1),
-            "unit_id": OUTDOOR_ID
         }
     except Exception as e:
-        out["outdoor"] = {"error": str(e), "unit_id": OUTDOOR_ID}
+        out["outdoor"] = {"unit_id": OUTDOOR_ID, "error": str(e)}
         out["ok"] = False
 
     return out
-
 
 
 # =========================================================
