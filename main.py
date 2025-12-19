@@ -62,8 +62,8 @@ def read_sensor(unit_id: int) -> Tuple[float, float, Tuple[int, ...]]:
 # =========================
 GPIO_CHIP = os.getenv("GPIO_CHIP", "/dev/gpiochip0")
 
-LINE_OPEN = int(os.getenv("LINE_OPEN", "24"))
-LINE_CLOSE = int(os.getenv("LINE_CLOSE", "25"))
+LINE_OPEN = int(os.getenv("LINE_OPEN", "24")) # DI1
+LINE_CLOSE = int(os.getenv("LINE_CLOSE", "25")) # DI2
 DEFAULT_PULSE_MS = int(os.getenv("DEFAULT_PULSE_MS", "800"))
 
 LINE_DI1 = int(os.getenv("LINE_DI1", "17"))
