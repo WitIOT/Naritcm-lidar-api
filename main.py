@@ -13,9 +13,6 @@ from pydantic import BaseModel
 from periphery import GPIO
 from pymodbus.client import ModbusSerialClient
 
-
-
-
 # =========================================================
 # App
 # =========================================================
