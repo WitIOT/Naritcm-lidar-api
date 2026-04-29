@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
  
-COPY main.py /app/main.py
+COPY main_2.py /app/main.py
 COPY rain_sensor.py /app/rain_sensor.py
 COPY static /app/static
  
