@@ -46,7 +46,7 @@ services:
       # ===== RG-15 Rain Sensor =====
       RAIN_PORT: "/dev/ttyUSB0"
       RAIN_BAUDRATE: "9600"
-      RAIN_POLL_S: "1.0"       # อ่านค่าทุก 1 วินาที
+      RAIN_POLL_S: "0.8"       # อ่านค่าทุก 0.8 วินาที
       RAIN_HISTORY: "100"      # เก็บประวัติ 100 รายการ
       LENS_POLL_N: "60"        # ส่ง K ทุก 60 รอบ (~3 นาที)
 
