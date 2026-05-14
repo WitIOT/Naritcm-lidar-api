@@ -39,8 +39,8 @@ class RainSensorState:
 
     # ---- writers ----
     def update_rain(self, rint: float, event: float, total: float):
-        now = datetime.now(timezone.utc).isoformat()
         with self._lock:
+            now = datetime.now(timezone.utc).isoformat()  # timestamp ภายใต้ lock — สอดคล้องกับข้อมูล
             self.rint       = rint
             self.event_acc  = event
             self.total_acc  = total
@@ -109,14 +109,22 @@ rain_state = RainSensorState()
 # =========================================================
 # Helpers
 # =========================================================
+
+# Pre-compile regex — กัน re.compile ทุก call (เรียกทุก 0.8s)
+_RE_EVENT = re.compile(r"EventAcc\s+([\d.]+)")
+_RE_TOTAL = re.compile(r"TotalAcc\s+([\d.]+)")
+_RE_RINT  = re.compile(r"RInt\s+([\d.]+)")
+_RE_EMTOT = re.compile(r"EmTotal\s+(\d+)")
+
+
 def _parse_rain(line: str):
     """คืน (rint, event, total) หรือ None"""
     if "Acc" not in line:
         return None
     try:
-        event = float(re.search(r"EventAcc\s+([\d.]+)", line).group(1))
-        total = float(re.search(r"TotalAcc\s+([\d.]+)", line).group(1))
-        rint  = float(re.search(r"RInt\s+([\d.]+)",     line).group(1))
+        event = float(_RE_EVENT.search(line).group(1))
+        total = float(_RE_TOTAL.search(line).group(1))
+        rint  = float(_RE_RINT.search(line).group(1))
         return rint, event, total
     except Exception:
         return None
@@ -124,10 +132,8 @@ def _parse_rain(line: str):
 
 def _parse_lens(line: str):
     """คืน (em_total | None, lens_bad, em_sat)"""
-    em_total = None
-    m = re.search(r"EmTotal\s+(\d+)", line)
-    if m:
-        em_total = int(m.group(1))
+    m = _RE_EMTOT.search(line)
+    em_total = int(m.group(1)) if m else None
     return em_total, ("LensBad" in line), ("EmSat" in line)
 
 

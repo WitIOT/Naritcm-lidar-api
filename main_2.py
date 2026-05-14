@@ -77,22 +77,30 @@ class DOManager:
         self.gpio_close.write(False)
 
     def pulse(self, target: Literal["open", "close"], ms: int):
+        """
+        ส่ง pulse แบบ non-blocking — spawn thread แยก แล้วคืนทันที
+        HTTP handler ไม่ถูกบล็อกตลอด pulse duration (สูงสุด 5 วินาที)
+        """
         if not (1 <= ms <= 5000):
             raise ValueError("pulse ms must be 1..5000")
-        with self.lock:
-            self.all_low()
-            if target == "open":
-                self.state = "opening"
-                self.gpio_open.write(True)
-            else:
-                self.state = "closing"
-                self.gpio_close.write(True)
-        try:
-            time.sleep(ms / 1000.0)
-        finally:
+
+        def _do_pulse():
             with self.lock:
                 self.all_low()
-                self.state = "idle"
+                if target == "open":
+                    self.state = "opening"
+                    self.gpio_open.write(True)
+                else:
+                    self.state = "closing"
+                    self.gpio_close.write(True)
+            try:
+                time.sleep(ms / 1000.0)
+            finally:
+                with self.lock:
+                    self.all_low()
+                    self.state = "idle"
+
+        threading.Thread(target=_do_pulse, daemon=True, name=f"pulse-{target}").start()
 
     def hold(self, target: Literal["open", "close"]):
         with self.lock:
@@ -133,8 +141,37 @@ class DIReader:
         return bool(raw_level if self.active_high else (1 - raw_level))
 
 
+class LimitCache:
+    """
+    อ่าน GPIO DI1 ใน background thread ทุก poll_ms ms
+    endpoint /limit/status คืนจาก cache → ไม่ blocking main thread
+    """
+    def __init__(self, reader: "DIReader", poll_ms: int = 200):
+        self._reader = reader
+        self._poll_s = max(poll_ms, 50) / 1000.0
+        self._state: bool = False
+        self._lock = threading.Lock()
+        self._thread = threading.Thread(target=self._run, daemon=True, name="limit-poll")
+        self._thread.start()
+
+    def _run(self):
+        while True:
+            try:
+                val = self._reader.read()
+                with self._lock:
+                    self._state = val
+            except Exception:
+                pass
+            time.sleep(self._poll_s)
+
+    def get(self) -> bool:
+        with self._lock:
+            return self._state
+
+
 manager = DOManager(GPIO_CHIP, LINE_OPEN, LINE_CLOSE)
 di1 = DIReader(GPIO_CHIP, LINE_DI1, DI1_ACTIVE_HIGH, DI1_DEBOUNCE_MS)
+limit_cache = LimitCache(di1, poll_ms=200)  # อ่าน GPIO ทุก 200ms ใน background
 
 
 class PulseRequest(BaseModel):
@@ -189,7 +226,7 @@ def door_stop():
 
 @app.get("/limit/status")
 def limit_status():
-    state = di1.read()
+    state = limit_cache.get()   # คืนจาก cache ทันที ไม่ blocking
     return {
         "ok": True,
         "limit": {
@@ -235,19 +272,16 @@ modbus = ModbusSerialClient(
     timeout=TIMEOUT_S,
 )
 
-_modbus_lock = threading.Lock()
+# RLock แทน Lock — กัน deadlock เมื่อ ensure_connected และ read_raw_regs ใช้ lock เดียวกัน
+_modbus_lock = threading.RLock()
 
 
-def ensure_connected():
+def read_raw_regs(unit_id: int) -> Tuple[int, ...]:
+    """อ่าน registers พร้อม auto-reconnect ภายใต้ lock เดียว (ไม่ deadlock)"""
     with _modbus_lock:
         if not modbus.connected:
             if not modbus.connect():
                 raise RuntimeError("Modbus not connected")
-
-
-def read_raw_regs(unit_id: int) -> Tuple[int, ...]:
-    ensure_connected()
-    with _modbus_lock:
         if READ_TABLE == "input":
             rr = modbus.read_input_registers(REG_START, REG_COUNT, slave=unit_id)
         else:
@@ -272,64 +306,90 @@ def calc_dewpoint(temp_c: float, rh: float) -> float:
     return (b * gamma) / (a - gamma)
 
 
+class SensorCache:
+    """
+    Poll Modbus ใน background thread ทุก poll_ms ms
+    endpoints /api/sensor คืนจาก cache → ไม่ blocking, ไม่ชนกับ WebSocket poll loop
+    """
+    def __init__(self, poll_ms: int = 1000):
+        self._poll_s = max(poll_ms, 200) / 1000.0
+        self._lock = threading.Lock()
+        self._data: Dict[int, Dict[str, Any]] = {}
+        self._thread = threading.Thread(target=self._run, daemon=True, name="sensor-poll")
+        self._thread.start()
+
+    def _read_unit(self, unit_id: int) -> Dict[str, Any]:
+        regs = read_raw_regs(unit_id)
+        h, t = to_humi_temp(regs)
+        d = calc_dewpoint(t, h)
+        return {
+            "unit_id":   unit_id,
+            "raw":       regs,
+            "temp":      round(t, 1),
+            "humi":      round(h, 1),
+            "dewpoint":  round(d, 1),
+            "error":     None,
+        }
+
+    def _run(self):
+        while True:
+            for uid in (INDOOR_ID, OUTDOOR_ID):
+                try:
+                    entry = self._read_unit(uid)
+                except Exception as e:
+                    entry = {"unit_id": uid, "raw": None, "temp": None,
+                             "humi": None, "dewpoint": None, "error": str(e)}
+                with self._lock:
+                    self._data[uid] = entry
+            time.sleep(self._poll_s)
+
+    def get(self, unit_id: int) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            return self._data.get(unit_id)
+
+    def get_all(self) -> Dict[int, Dict[str, Any]]:
+        with self._lock:
+            return dict(self._data)
+
+
+sensor_cache = SensorCache(poll_ms=POLL_MS)
+
+
 @app.get("/api/sensor/{unit_id}")
 def read_sensor_unit(unit_id: int):
-    try:
-        regs = read_raw_regs(unit_id)
-        humi, temp = to_humi_temp(regs)
-        dew = calc_dewpoint(temp, humi)
-        name = "indoor" if unit_id == INDOOR_ID else (
-            "outdoor" if unit_id == OUTDOOR_ID else f"unit_{unit_id}"
-        )
-        return {
-            "ok": True,
-            "name": name,
-            "unit_id": unit_id,
-            "raw_registers": regs,
-            "humi": round(humi, 1),
-            "temp": round(temp, 1),
-            "dewpoint": round(dew, 1),
-        }
-    except Exception as e:
-        return JSONResponse(
-            status_code=500,
-            content={"ok": False, "unit_id": unit_id, "error": str(e)}
-        )
+    entry = sensor_cache.get(unit_id)
+    if entry is None:
+        return JSONResponse(status_code=503, content={"ok": False, "unit_id": unit_id, "error": "No data yet"})
+    if entry["error"]:
+        return JSONResponse(status_code=500, content={"ok": False, "unit_id": unit_id, "error": entry["error"]})
+    name = "indoor" if unit_id == INDOOR_ID else (
+        "outdoor" if unit_id == OUTDOOR_ID else f"unit_{unit_id}"
+    )
+    return {
+        "ok": True, "name": name, "unit_id": unit_id,
+        "raw_registers": entry["raw"],
+        "humi": entry["humi"], "temp": entry["temp"], "dewpoint": entry["dewpoint"],
+    }
 
 
 @app.get("/api/sensor")
 def read_sensor_both():
+    all_data = sensor_cache.get_all()
     out: Dict[str, Any] = {"ok": True}
 
-    try:
-        r1 = read_raw_regs(INDOOR_ID)
-        h1, t1 = to_humi_temp(r1)
-        d1 = calc_dewpoint(t1, h1)
-        out["indoor"] = {
-            "unit_id": INDOOR_ID,
-            "raw": r1,
-            "humi": round(h1, 1),
-            "temp": round(t1, 1),
-            "dewpoint": round(d1, 1),
-        }
-    except Exception as e:
-        out["indoor"] = {"unit_id": INDOOR_ID, "error": str(e)}
-        out["ok"] = False
-
-    try:
-        r2 = read_raw_regs(OUTDOOR_ID)
-        h2, t2 = to_humi_temp(r2)
-        d2 = calc_dewpoint(t2, h2)
-        out["outdoor"] = {
-            "unit_id": OUTDOOR_ID,
-            "raw": r2,
-            "humi": round(h2, 1),
-            "temp": round(t2, 1),
-            "dewpoint": round(d2, 1),
-        }
-    except Exception as e:
-        out["outdoor"] = {"unit_id": OUTDOOR_ID, "error": str(e)}
-        out["ok"] = False
+    for uid, key in ((INDOOR_ID, "indoor"), (OUTDOOR_ID, "outdoor")):
+        entry = all_data.get(uid)
+        if entry is None:
+            out[key] = {"unit_id": uid, "error": "No data yet"}
+            out["ok"] = False
+        elif entry["error"]:
+            out[key] = {"unit_id": uid, "error": entry["error"]}
+            out["ok"] = False
+        else:
+            out[key] = {
+                "unit_id": uid, "raw": entry["raw"],
+                "humi": entry["humi"], "temp": entry["temp"], "dewpoint": entry["dewpoint"],
+            }
 
     return out
 
@@ -338,52 +398,58 @@ def read_sensor_both():
 # WebSocket Sensor Realtime
 # =========================================================
 ws_clients: Set[WebSocket] = set()
+_ws_lock = asyncio.Lock()
 
 
 @app.websocket("/ws/sensor")
 async def ws_sensor(ws: WebSocket):
     await ws.accept()
-    ws_clients.add(ws)
+    async with _ws_lock:
+        ws_clients.add(ws)
     try:
         while True:
             await ws.receive_text()
     except WebSocketDisconnect:
         pass
     finally:
-        ws_clients.discard(ws)
+        async with _ws_lock:
+            ws_clients.discard(ws)
 
 
 async def sensor_poll_loop():
+    """Push cache ไปยัง WebSocket clients ทุก POLL_MS — ไม่ยิง Modbus ซ้ำ"""
     while True:
-        payload = {"ts": int(time.time() * 1000), "ok": True}
+        all_data = sensor_cache.get_all()
+        payload: Dict[str, Any] = {"ts": int(time.time() * 1000), "ok": True}
 
-        def pack(unit_id: int):
-            regs = read_raw_regs(unit_id)
-            h, t = to_humi_temp(regs)
-            d = calc_dewpoint(t, h)
-            return {
-                "unit_id": unit_id,
-                "temp": round(t, 1),
-                "humi": round(h, 1),
-                "dewpoint": round(d, 1),
-            }
+        for uid, key in ((INDOOR_ID, "indoor"), (OUTDOOR_ID, "outdoor")):
+            entry = all_data.get(uid)
+            if entry and not entry["error"]:
+                payload[key] = {
+                    "unit_id":  uid,
+                    "temp":     entry["temp"],
+                    "humi":     entry["humi"],
+                    "dewpoint": entry["dewpoint"],
+                }
+            else:
+                payload["ok"] = False
+                payload["error"] = (entry or {}).get("error", "No data")
 
-        try:
-            payload["indoor"] = pack(INDOOR_ID)
-            payload["outdoor"] = pack(OUTDOOR_ID)
-        except Exception as e:
-            payload["ok"] = False
-            payload["error"] = str(e)
+        # snapshot set ภายใต้ lock กัน concurrent modification
+        async with _ws_lock:
+            clients = set(ws_clients)
 
         dead = []
-        for ws in ws_clients:
+        for ws in clients:
             try:
                 await ws.send_json(payload)
             except Exception:
                 dead.append(ws)
 
-        for ws in dead:
-            ws_clients.discard(ws)
+        if dead:
+            async with _ws_lock:
+                for ws in dead:
+                    ws_clients.discard(ws)
 
         await asyncio.sleep(POLL_MS / 1000.0)
 
