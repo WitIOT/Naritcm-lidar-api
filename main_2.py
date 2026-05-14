@@ -279,15 +279,29 @@ _modbus_lock = threading.RLock()
 def read_raw_regs(unit_id: int) -> Tuple[int, ...]:
     """อ่าน registers พร้อม auto-reconnect ภายใต้ lock เดียว (ไม่ deadlock)"""
     with _modbus_lock:
+        # ถ้าไม่ connected ให้ close ก่อนแล้วค่อย connect ใหม่
+        # (กัน pymodbus คิดว่า connected แต่ socket จริงตายแล้ว)
         if not modbus.connected:
+            try:
+                modbus.close()
+            except Exception:
+                pass
             if not modbus.connect():
                 raise RuntimeError("Modbus not connected")
+
         if READ_TABLE == "input":
             rr = modbus.read_input_registers(REG_START, REG_COUNT, slave=unit_id)
         else:
             rr = modbus.read_holding_registers(REG_START, REG_COUNT, slave=unit_id)
-    if rr.isError():
-        raise RuntimeError(f"Modbus Error: {rr}")
+
+        if rr.isError():
+            # force disconnect เพื่อให้ครั้งถัดไป reconnect ใหม่
+            try:
+                modbus.close()
+            except Exception:
+                pass
+            raise RuntimeError(f"Modbus Error: {rr}")
+
     return tuple(rr.registers)
 
 
@@ -332,16 +346,29 @@ class SensorCache:
         }
 
     def _run(self):
+        fail_count = 0
         while True:
+            any_error = False
             for uid in (INDOOR_ID, OUTDOOR_ID):
                 try:
                     entry = self._read_unit(uid)
+                    with self._lock:
+                        self._data[uid] = entry
                 except Exception as e:
+                    any_error = True
                     entry = {"unit_id": uid, "raw": None, "temp": None,
                              "humi": None, "dewpoint": None, "error": str(e)}
-                with self._lock:
-                    self._data[uid] = entry
-            time.sleep(self._poll_s)
+                    with self._lock:
+                        self._data[uid] = entry
+
+            if any_error:
+                fail_count += 1
+                # backoff: 1s → 2s → 4s → max 16s เมื่อ Modbus ไม่ตอบซ้ำ
+                backoff = min(self._poll_s * (2 ** (fail_count - 1)), 16.0)
+                time.sleep(backoff)
+            else:
+                fail_count = 0
+                time.sleep(self._poll_s)
 
     def get(self, unit_id: int) -> Optional[Dict[str, Any]]:
         with self._lock:
