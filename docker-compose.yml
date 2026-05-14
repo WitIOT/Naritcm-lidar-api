@@ -12,7 +12,7 @@ services:
     devices:
       - "/dev/ttyACM0:/dev/ttyACM0"
       - "/dev/gpiochip0:/dev/gpiochip0"
-      - "/dev/ttyUSB0:/dev/ttyUSB0"       # RG-15 Rain Sensor via CH340
+      - "/dev/ttyACM2:/dev/ttyUSB0"       # RG-15 Rain Sensor via CH340
 
     environment:
       # ===== Web/Static =====
