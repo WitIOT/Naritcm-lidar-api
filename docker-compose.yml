@@ -10,9 +10,9 @@ services:
 
     privileged: true
     devices:
-      - "/dev/ttyACM0:/dev/ttyACM0"
+      - "/dev/ttyRS485:/dev/ttyACM0"         # RS485 Modbus sensor — symlink คงที่ไม่เปลี่ยนตาม reboot
       - "/dev/gpiochip0:/dev/gpiochip0"
-      - "/dev/ttyACM2:/dev/ttyUSB0"       # RG-15 Rain Sensor via CH340
+      - "/dev/ttyRG15:/dev/ttyUSB0"        # RG-15 Rain Sensor — symlink คงที่ไม่เปลี่ยนตาม reboot
 
     environment:
       # ===== Web/Static =====
