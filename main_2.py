@@ -307,9 +307,9 @@ def read_raw_regs(unit_id: int) -> Tuple[int, ...]:
                 raise RuntimeError("Modbus not connected")
 
         if READ_TABLE == "input":
-            rr = modbus.read_input_registers(REG_START, REG_COUNT, slave=unit_id)
+            rr = modbus.read_input_registers(REG_START, count=REG_COUNT, device_id=unit_id)
         else:
-            rr = modbus.read_holding_registers(REG_START, REG_COUNT, slave=unit_id)
+            rr = modbus.read_holding_registers(REG_START, count=REG_COUNT, device_id=unit_id)
 
         if rr.isError():
             # force disconnect เพื่อให้ครั้งถัดไป reconnect ใหม่
