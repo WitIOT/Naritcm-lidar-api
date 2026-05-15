@@ -12,8 +12,9 @@ COPY rain_sensor.py /app/rain_sensor.py
 COPY static /app/static
 
 EXPOSE 8000
-# --loop uvloop  → async I/O เร็วขึ้น ~20%
-# --workers 2    → รับ request พร้อมกันได้มากขึ้น (ปรับตาม CPU core)
+# --workers 1 เท่านั้น — GPIO (gpiochip0) เป็น hardware exclusive resource
+# หลาย worker = หลาย process พยายาม open GPIO line เดิมพร้อมกัน → Errno 16 EBUSY
+# concurrency ใช้ asyncio + background threads แทน (SensorCache, LimitCache ทำอยู่แล้ว)
 CMD ["uvicorn", "main_2:app", "--host", "0.0.0.0", "--port", "8000", \
-     "--loop", "uvloop", "--workers", "2"]
+     "--loop", "uvloop", "--workers", "1"]
  

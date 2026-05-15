@@ -169,9 +169,26 @@ class LimitCache:
             return self._state
 
 
-manager = DOManager(GPIO_CHIP, LINE_OPEN, LINE_CLOSE)
-di1 = DIReader(GPIO_CHIP, LINE_DI1, DI1_ACTIVE_HIGH, DI1_DEBOUNCE_MS)
-limit_cache = LimitCache(di1, poll_ms=200)  # อ่าน GPIO ทุก 200ms ใน background
+
+# =========================================================
+# GPIO singleton — สร้างครั้งเดียวต่อ process
+# ป้องกัน EBUSY เมื่อ uvicorn reload หรือ fork worker
+# =========================================================
+_gpio_initialized = False
+manager: Optional["DOManager"] = None
+di1: Optional["DIReader"] = None
+limit_cache: Optional["LimitCache"] = None
+
+
+def _init_gpio():
+    """เรียกครั้งเดียวตอน startup เท่านั้น"""
+    global _gpio_initialized, manager, di1, limit_cache
+    if _gpio_initialized:
+        return
+    manager = DOManager(GPIO_CHIP, LINE_OPEN, LINE_CLOSE)
+    di1 = DIReader(GPIO_CHIP, LINE_DI1, DI1_ACTIVE_HIGH, DI1_DEBOUNCE_MS)
+    limit_cache = LimitCache(di1, poll_ms=200)
+    _gpio_initialized = True
 
 
 class PulseRequest(BaseModel):
@@ -488,9 +505,11 @@ async def sensor_poll_loop():
 def api_rain():
     """สถานะฝนปัจจุบัน พร้อม lens status"""
     data = rain_state.snapshot()
+    # timestamp = เวลาที่อ่าน sensor ล่าสุด (ไม่ใช่เวลาที่ API ตอบ)
+    # ถ้า offline → ส่ง last_update ค้าง + online=false ให้ client รู้
     return {
         "ok":        True,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": data.get("last_update") or datetime.now(timezone.utc).isoformat(),
         **data,
     }
 
@@ -525,12 +544,26 @@ def api_rain_lens():
 # =========================================================
 @app.on_event("startup")
 async def startup_event():
+    _init_gpio()          # เปิด GPIO ครั้งเดียวต่อ process
     start_rain_polling()
     asyncio.create_task(sensor_poll_loop())
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
+    # ปิด GPIO อย่างสะอาด เพื่อให้ restart ครั้งถัดไปไม่ EBUSY
+    try:
+        if manager is not None:
+            manager.all_low()
+            manager.gpio_open.close()
+            manager.gpio_close.close()
+    except Exception:
+        pass
+    try:
+        if di1 is not None:
+            di1.gpio.close()
+    except Exception:
+        pass
     try:
         modbus.close()
     except Exception:

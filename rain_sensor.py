@@ -74,8 +74,15 @@ class RainSensorState:
                 self.lens_status = "ok"
 
     def set_offline(self):
+        """ตั้ง offline และ reset ค่าที่อ่านจาก sensor (ยกเว้นยอดสะสม total_acc)"""
         with self._lock:
-            self.online = False
+            self.online      = False
+            self.is_raining  = False
+            self.rint        = 0.0
+            self.event_acc   = 0.0
+            # total_acc ไม่ reset เพราะเป็นยอดสะสมทั้งหมด
+            self.em_total    = None
+            self.lens_status = "unknown"
 
     # ---- readers ----
     def snapshot(self) -> dict:
@@ -143,8 +150,14 @@ def _parse_lens(line: str):
 def _poll_loop():
     count = 0
     ser: Optional[serial.Serial] = None
+    last_data_ts: float = time.time()
+    STALE_SEC = 10.0   # ไม่ได้รับ data เกิน 10s → ถือว่าสายขาด/sensor หาย
 
     while True:
+        # ---- stale check: ถ้านานเกิน → force offline ----
+        if (time.time() - last_data_ts) > STALE_SEC:
+            rain_state.set_offline()
+
         # ---- open serial if needed ----
         try:
             if ser is None or not ser.is_open:
@@ -154,7 +167,8 @@ def _poll_loop():
                     timeout=2,
                 )
                 time.sleep(0.3)
-        except serial.SerialException:
+                last_data_ts = time.time()   # reset timer หลังเปิด port ใหม่
+        except (serial.SerialException, OSError):
             rain_state.set_offline()
             time.sleep(5)
             continue
@@ -186,13 +200,15 @@ def _poll_loop():
                 parsed = _parse_rain(line)
                 if parsed:
                     rain_state.update_rain(*parsed)
+                    last_data_ts = time.time()   # บันทึกว่ามี data เข้ามา
 
                 # lens data
                 em_total, lens_bad, em_sat = _parse_lens(line)
                 if em_total is not None or lens_bad or em_sat:
                     rain_state.update_lens(em_total, lens_bad, em_sat)
+                    last_data_ts = time.time()
 
-        except serial.SerialException:
+        except (serial.SerialException, OSError):
             rain_state.set_offline()
             _close(ser)
             ser = None
