@@ -1,7 +1,7 @@
 services:
-  naritcm-lidar-api:
+  naritcm-Cleanroom-api:
     build: .
-    container_name: naritcm-lidar-api
+    container_name: naritcm-Cleanroom-api
     restart: unless-stopped
     stop_grace_period: 10s
 
