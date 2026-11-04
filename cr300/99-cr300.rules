@@ -1,0 +1,33 @@
+# CR300 RS-232 serial port — stable name /dev/cr300
+# ติดตั้ง: sudo cp cr300/99-cr300.rules /etc/udev/rules.d/99-cr300.rules
+#          sudo udevadm control --reload-rules
+#          sudo udevadm trigger --action=add --subsystem-match=tty
+#          ls -l /dev/cr300
+#
+# แก้ ID_VENDOR_ID / ID_MODEL_ID ให้ตรงกับ adapter ที่ใช้จริง:
+#   udevadm info -q property -n /dev/ttyUSB0 | grep -E "ID_VENDOR_ID|ID_MODEL_ID|ID_USB_INTERFACE_NUM|ID_SERIAL_SHORT"
+#
+# ค่าปัจจุบัน = IRIV PiControl (CH342 interface 02 = พอร์ต RS-232). เครื่องอื่นที่ใช้
+# USB-RS232 adapter คนละรุ่นต้องแก้ค่าให้ตรง (ดู cr300/README.md ข้อ 1).
+
+# ---- symlink /dev/cr300 (RS-232 = interface 02 ของ CH342) ----
+SUBSYSTEM=="tty", ENV{ID_VENDOR_ID}=="1a86", ENV{ID_MODEL_ID}=="55d2", ENV{ID_USB_INTERFACE_NUM}=="02", SYMLINK+="cr300"
+
+# ---- บอก ModemManager ไม่ต้องแตะ device นี้ (กัน "Device or resource busy") ----
+SUBSYSTEM=="tty", ENV{ID_VENDOR_ID}=="1a86", ENV{ID_MODEL_ID}=="55d2", ENV{ID_USB_INTERFACE_NUM}=="02", ENV{ID_MM_DEVICE_IGNORE}="1"
+
+# ====================================================================
+# ตัวอย่างสำหรับ adapter ชิปอื่น (uncomment + แก้ให้ตรง, ถ้าใช้ตัวเดียวพอ)
+# ถ้าเครื่องมี CH34x หลายตัว (เช่น RG-15 ก็เป็น CH342) ให้แยกด้วย serial number:
+#
+# CH340 (1a86:7523):
+# SUBSYSTEM=="tty", ENV{ID_VENDOR_ID}=="1a86", ENV{ID_MODEL_ID}=="7523", ENV{ID_SERIAL_SHORT}=="<CR300_SERIAL>", SYMLINK+="cr300"
+#
+# CP210x (10c4:ea60):
+# SUBSYSTEM=="tty", ENV{ID_VENDOR_ID}=="10c4", ENV{ID_MODEL_ID}=="ea60", ENV{ID_SERIAL_SHORT}=="<CR300_SERIAL>", SYMLINK+="cr300"
+#
+# FTDI (0403:6001):
+# SUBSYSTEM=="tty", ENV{ID_VENDOR_ID}=="0403", ENV{ID_MODEL_ID}=="6001", ENV{ID_SERIAL_SHORT}=="<CR300_SERIAL>", SYMLINK+="cr300"
+#
+# PL2303 (067b:2303):
+# SUBSYSTEM=="tty", ENV{ID_VENDOR_ID}=="067b", ENV{ID_MODEL_ID}=="2303", SYMLINK+="cr300"
