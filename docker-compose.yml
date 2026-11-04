@@ -12,7 +12,7 @@ services:
     devices:
       - "/dev/ttyRS485:/dev/ttyACM0"         # RS485 Modbus sensor — symlink คงที่ไม่เปลี่ยนตาม reboot
       - "/dev/gpiochip0:/dev/gpiochip0"
-      - "/dev/ttyRG15:/dev/ttyUSB0"        # RG-15 Rain Sensor — symlink คงที่ไม่เปลี่ยนตาม reboot
+      - "/dev/ttyRG15:/dev/ttyRG15"         # RG-15 Rain Sensor (CH342G) — symlink คงที่ไม่เปลี่ยนตาม reboot
 
     environment:
       # ===== Web/Static =====
@@ -45,7 +45,7 @@ services:
       DI1_DEBOUNCE_MS: "50"
 
       # ===== RG-15 Rain Sensor =====
-      RAIN_PORT: "/dev/ttyUSB0"
+      RAIN_PORT: "/dev/ttyRG15"
       RAIN_BAUDRATE: "9600"
       RAIN_POLL_S: "0.8"       # อ่านค่าทุก 0.8 วินาที
       RAIN_HISTORY: "100"      # เก็บประวัติ 100 รายการ
@@ -74,3 +74,4 @@ services:
 
     depends_on:
       - naritcm-lidar-api
+

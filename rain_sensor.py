@@ -12,7 +12,7 @@ from collections import deque
 from typing import Optional
 
 # ===== Config from environment =====
-RAIN_PORT     = os.getenv("RAIN_PORT",      "/dev/ttyUSB0")
+RAIN_PORT     = os.getenv("RAIN_PORT",      "/dev/ttyRG15")
 RAIN_BAUDRATE = int(os.getenv("RAIN_BAUDRATE", "9600"))
 RAIN_POLL_S   = float(os.getenv("RAIN_POLL_S",  "3.0"))
 RAIN_HISTORY  = int(os.getenv("RAIN_HISTORY",   "100"))
@@ -44,7 +44,7 @@ class RainSensorState:
             self.rint       = rint
             self.event_acc  = event
             self.total_acc  = total
-            self.is_raining = rint > 0
+            self.is_raining = rint > 0.1
             self.online     = True
             self.last_update = now
             self._history.append({
