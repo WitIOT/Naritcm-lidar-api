@@ -8,6 +8,7 @@ COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt uvloop
 
 COPY main_2.py /app/main_2.py
+COPY cr300_api.py /app/cr300_api.py
 COPY rain_sensor.py /app/rain_sensor.py
 COPY static /app/static
 
@@ -17,4 +18,3 @@ EXPOSE 8000
 # concurrency ใช้ asyncio + background threads แทน (SensorCache, LimitCache ทำอยู่แล้ว)
 CMD ["uvicorn", "main_2:app", "--host", "0.0.0.0", "--port", "8000", \
      "--loop", "uvloop", "--workers", "1"]
- 

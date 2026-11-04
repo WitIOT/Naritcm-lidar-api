@@ -12,11 +12,17 @@ services:
     devices:
       - "/dev/ttyRS485:/dev/ttyACM0"         # RS485 Modbus sensor — symlink คงที่ไม่เปลี่ยนตาม reboot
       - "/dev/gpiochip0:/dev/gpiochip0"
-      - "/dev/ttyRG15:/dev/ttyUSB0"        # RG-15 Rain Sensor — symlink คงที่ไม่เปลี่ยนตาม reboot
+      - "/dev/ttyRG15:/dev/ttyRG15"         # RG-15 Rain Sensor (CH342G) — symlink คงที่ไม่เปลี่ยนตาม reboot
+
+    volumes:
+      - cr300_data:/data/cr300:ro          # อ่านข้อมูล CR300 ที่ cr300-collector เขียนไว้ (read-only)
 
     environment:
       # ===== Web/Static =====
       STATIC_DIR: "static"
+
+      # ===== CR300 (read-only API, อ่านจาก volume ที่แชร์) =====
+      CR300_DATA_HOME: "/data/cr300"
 
       # ===== RS485 Modbus =====
       SERIAL_PORT: "/dev/ttyACM0"
@@ -45,11 +51,37 @@ services:
       DI1_DEBOUNCE_MS: "50"
 
       # ===== RG-15 Rain Sensor =====
-      RAIN_PORT: "/dev/ttyUSB0"
+      RAIN_PORT: "/dev/ttyRG15"
       RAIN_BAUDRATE: "9600"
       RAIN_POLL_S: "0.8"       # อ่านค่าทุก 0.8 วินาที
       RAIN_HISTORY: "100"      # เก็บประวัติ 100 รายการ
       LENS_POLL_N: "60"        # ส่ง K ทุก 60 รอบ (~3 นาที)
+
+  # ===== CR300 weather datalogger → CSV (writer เป็นตัวส่งเข้า InfluxDB) =====
+  cr300-collector:
+    build: ./cr300
+    container_name: cr300-collector
+    restart: unless-stopped
+
+    devices:
+      - "/dev/cr300:/dev/cr300"            # USB-RS232 adapter — ทำ udev symlink /dev/cr300 บนเครื่องนี้
+
+    volumes:
+      - cr300_data:/data/cr300             # เขียน CSV/latest ให้ lidar-api อ่าน + writer ดึงผ่าน API
+
+    environment:
+      CR300_URL: "serial:/dev/cr300:115200"
+      CR300_TABLE: "Every60"               # averaged (รายชั่วโมง)
+      PUBLIC_TABLE: "Public"               # live snapshot
+      PUBLIC_POLL_SECONDS: "60"
+      POLL_SECONDS: "300"
+      BACKFILL_HOURS: "6"
+      LOGGER_OFFSET_HOURS: "-7"            # นาฬิกา CR300 เร็วไป 7 ชม. (ตั้ง 0 ถ้าแก้นาฬิกาแล้ว)
+      TZ: "Asia/Bangkok"
+      STATION: "narit_cr300"
+      DATA_HOME: "/data/cr300"
+      IGNORE_FIELDS: "PPFD,PPFD_Avg"       # PPFD = ขาลอย ไม่มีเซ็นเซอร์จริง (ลบออก); เอาออกเมื่อต่อเซ็นเซอร์จริง
+      # ไม่ตั้ง INFLUX_* ที่นี่ -> collector เขียน CSV อย่างเดียว, ให้ sensor-writer เป็นคนส่งเข้า InfluxDB
 
   sensor-writer:
     build: ./writer
@@ -58,8 +90,10 @@ services:
 
     environment:
       # ===== API URLs =====
-      SENSOR_API_URL: "http://naritcm-lidar-api:8000/api/sensor"
-      RAIN_API_URL:   "http://naritcm-lidar-api:8000/api/rain"
+      SENSOR_API_URL:   "http://naritcm-lidar-api:8000/api/sensor"
+      RAIN_API_URL:     "http://naritcm-lidar-api:8000/api/rain"
+      CR300_LIVE_URL:   "http://naritcm-lidar-api:8000/api/cr300/live"
+      CR300_LATEST_URL: "http://naritcm-lidar-api:8000/api/cr300/latest"
       POLL_SEC: "1.0"
       HTTP_TIMEOUT_SEC: "2.5"
 
@@ -67,10 +101,16 @@ services:
       INFLUX_URL:    "http://192.168.49.8:8086"
       INFLUX_ORG:    "Narit"
       INFLUX_BUCKET: "Lidar"
-      MEASUREMENT:      "room1"
-      RAIN_MEASUREMENT: "rain"     # measurement แยกสำหรับข้อมูลฝน
+      MEASUREMENT:         "room1"
+      RAIN_MEASUREMENT:    "rain"      # measurement แยกสำหรับข้อมูลฝน
+      WEATHER_MEASUREMENT: "weather"   # measurement สำหรับ CR300 (tag stream=live/averaged)
+      WEATHER_TZ_OFFSET_HOURS: "7"     # เวลา CR300 เป็น Asia/Bangkok -> แปลงเป็น UTC
 
-      INFLUX_TOKEN: "kTRPZoj7DxBnKY4xDy5kJty6KZhv4BXg5W9JiUGdh9kdaPQr5RF9lic0TYx_3XucOqNHnGlydlTQwFiwuPS-6Q=="
+      INFLUX_TOKEN: "${INFLUX_TOKEN}"       # มาจากไฟล์ .env (ไม่ commit)
 
     depends_on:
       - naritcm-lidar-api
+      - cr300-collector
+
+volumes:
+  cr300_data:

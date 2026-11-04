@@ -15,6 +15,7 @@ from periphery import GPIO
 from pymodbus.client import ModbusSerialClient
 
 from rain_sensor import rain_state, start_rain_polling
+from cr300_api import router as cr300_router
 
 # =========================================================
 # App
@@ -23,6 +24,9 @@ app = FastAPI(
     title="NARIT CM LiDAR API (Door + Limit + RS485 Sensor + Rain)",
     version="3.2"
 )
+
+# CR300 weather endpoints (reads shared /data/cr300 volume) -> /api/cr300/*
+app.include_router(cr300_router)
 
 # =========================================================
 # Static
